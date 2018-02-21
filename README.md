@@ -32,9 +32,9 @@ Logback appender which posts logs to slack via incoming webhook.
         <webhookUrl>...</webhookUrl>
         <channel>...</channel>
         <username>...</username>
-        <layout>
+        <encoder>
             <pattern>%date [%level] from %logger in %thread - %message%n%xException</pattern>
-        </layout>
+        </encoder>
     </appender>
 
     <appender name="ASYNC_SLACK" class="ch.qos.logback.classic.AsyncAppender">

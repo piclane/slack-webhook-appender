@@ -2,3 +2,4 @@
 *.iml
 target/
 logback-test.xml
+/bin/

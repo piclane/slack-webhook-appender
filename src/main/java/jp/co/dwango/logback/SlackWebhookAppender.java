@@ -1,9 +1,6 @@
 package jp.co.dwango.logback;
 
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.Layout;
-import ch.qos.logback.core.UnsynchronizedAppenderBase;
-
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -13,10 +10,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.OutputStreamAppender;
+
 /**
  * Logback appender implementation which posts logs to Slack via webhook.
  */
-public class SlackWebhookAppender extends UnsynchronizedAppenderBase<ILoggingEvent> {
+public class SlackWebhookAppender extends OutputStreamAppender<ILoggingEvent> {
 
     private static final int TIMEOUT_MILLIS = 50_000;
 
@@ -31,8 +31,9 @@ public class SlackWebhookAppender extends UnsynchronizedAppenderBase<ILoggingEve
     private String iconUrl;
 
     private boolean linkNames = true;
-
-    private Layout<ILoggingEvent> layout;
+    
+    /** OutputStream for receiving log string from encoder */
+    private final ByteArrayOutputStream baos = new ByteArrayOutputStream(1024);
 
     public String getWebhookUrl() {
         return this.webhookUrl;
@@ -82,21 +83,31 @@ public class SlackWebhookAppender extends UnsynchronizedAppenderBase<ILoggingEve
         this.linkNames = linkNames;
     }
 
-    public Layout<ILoggingEvent> getLayout() {
-        return this.layout;
-    }
-
-    public void setLayout(Layout<ILoggingEvent> layout) {
-        this.layout = layout;
-    }
-
+    /**
+     * @see ch.qos.logback.core.OutputStreamAppender#start()
+     */
     @Override
-    protected void append(ILoggingEvent eventObject) {
+    public void start() {
+        setOutputStream(baos);
+        super.start();
+    }
+    
+    /**
+     * @see ch.qos.logback.core.OutputStreamAppender#writeOut(java.lang.Object)
+     */
+    @Override
+    protected void writeOut(ILoggingEvent event) throws IOException {
+        String text;
+        try {
+            super.writeOut(event);
+            text = baos.toString();
+        } finally {
+            baos.reset();
+        }
+        
         List<String> fields = new ArrayList<String>();
 
         try {
-            String text = createText(eventObject);
-
             fields.add("\"text\": \"" + escapeQuotes(text) + '"');
             fields.add("\"channel\": \"" + escapeQuotes(checkNotNull(this.channel, "Channel is not specified.")) + '"');
             fields.add("\"username\": \"" + escapeQuotes(checkNotNull(this.username, "Username is not specified.")) + '"');
@@ -116,14 +127,17 @@ public class SlackWebhookAppender extends UnsynchronizedAppenderBase<ILoggingEve
 
             post(bodyBytes);
         } catch (Exception e) {
-            e.printStackTrace(System.err);
             addError("Failed to post a log to slack.", e);
         }
     }
-
-    // Visible for testing
+    
+    /**
+     * Post a body to Slack 
+     * 
+     * @param body byte array payload
+     * @throws IOException On error to post to Slack
+     */
     protected void post(byte[] body) throws IOException {
-
         checkNotNull(this.webhookUrl, "Webhook URL is not specified.");
 
         URL url = new URL(this.webhookUrl);
@@ -134,23 +148,13 @@ public class SlackWebhookAppender extends UnsynchronizedAppenderBase<ILoggingEve
         connection.setRequestMethod("POST");
         connection.setFixedLengthStreamingMode(body.length);
         connection.setRequestProperty("Content-Type", "application/json");
-        OutputStream os = connection.getOutputStream();
-
-        os.write(body);
-        os.flush();
-        os.close();
+        try(OutputStream os = connection.getOutputStream();) {
+            os.write(body);
+            os.flush();
+        }
 
         if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
             throw new IOException(connection.getResponseMessage() + "\n" + new String(body, StandardCharsets.UTF_8));
-        }
-    }
-
-    private String createText(ILoggingEvent event) {
-        Layout<ILoggingEvent> layout = this.layout;
-        if (layout == null) {
-            return event.getFormattedMessage();
-        } else {
-            return layout.doLayout(event);
         }
     }
 
